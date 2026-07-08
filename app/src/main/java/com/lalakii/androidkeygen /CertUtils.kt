@@ -21,9 +21,8 @@ enum class AlgorithmType { RSA, EC, DSA }
 object CertUtils {
 
     init {
-        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-            Security.addProvider(BouncyCastleProvider())
-        }
+    Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+    Security.insertProviderAt(BouncyCastleProvider(), 1)
     }
 
     /**
