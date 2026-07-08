@@ -1,6 +1,7 @@
 package com.lalakii.androidkeygen
 
 import android.app.DatePickerDialog
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -14,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -22,6 +24,8 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,6 +49,10 @@ class MainActivity : ComponentActivity() {
     // 待写入的证书内容(点击“生成”后暂存,选择保存路径后再落盘)
     private var pendingBytes: ByteArray? = null
 
+    // 查看证书时,用户选中的文件 Uri(选择文件后暂存,供后续读取)
+    private var pendingViewUri: Uri? = null
+    private var onCertPicked: ((Uri) -> Unit)? = null
+
     private val createDocumentLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/x-pkcs12")) { uri ->
             val bytes = pendingBytes
@@ -55,23 +63,67 @@ class MainActivity : ComponentActivity() {
             pendingBytes = null
         }
 
+    private val openDocumentLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                pendingViewUri = uri
+                onCertPicked?.invoke(uri)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface {
-                    KeyGenScreen(
-                        onGenerate = { type, years, alias, password, date ->
-                            val out = java.io.ByteArrayOutputStream()
-                            val error = CertUtils.create(out, type, years, alias, password, date)
-                            if (error != null) {
-                                Toast.makeText(this, "证书创建失败: $error", Toast.LENGTH_LONG).show()
-                            } else {
-                                pendingBytes = out.toByteArray()
-                                createDocumentLauncher.launch("$alias.jks")
-                            }
+                    var selectedTab by rememberSaveable { mutableStateOf(0) }
+
+                    Column {
+                        TabRow(selectedTabIndex = selectedTab) {
+                            Tab(
+                                selected = selectedTab == 0,
+                                onClick = { selectedTab = 0 },
+                                text = { Text("生成证书") }
+                            )
+                            Tab(
+                                selected = selectedTab == 1,
+                                onClick = { selectedTab = 1 },
+                                text = { Text("查看证书") }
+                            )
                         }
-                    )
+
+                        if (selectedTab == 0) {
+                            KeyGenScreen(
+                                onGenerate = { type, years, alias, password, date ->
+                                    val out = java.io.ByteArrayOutputStream()
+                                    val error = CertUtils.create(out, type, years, alias, password, date)
+                                    if (error != null) {
+                                        Toast.makeText(this, "证书创建失败: $error", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        pendingBytes = out.toByteArray()
+                                        createDocumentLauncher.launch("$alias.jks")
+                                    }
+                                }
+                            )
+                        } else {
+                            ViewCertScreen(
+                                onPickFile = { onPicked ->
+                                    onCertPicked = onPicked
+                                    openDocumentLauncher.launch(arrayOf("*/*"))
+                                },
+                                onReadCert = { password ->
+                                    val uri = pendingViewUri
+                                    if (uri == null) {
+                                        Pair(emptyList(), "请先选择证书文件")
+                                    } else {
+                                        contentResolver.openInputStream(uri)?.use { input ->
+                                            CertUtils.readCertificateInfo(input, password)
+                                        } ?: Pair(emptyList(), "无法读取所选文件")
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -251,6 +303,96 @@ fun KeyGenScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("生成")
+        }
+    }
+}
+
+@Composable
+fun ViewCertScreen(
+    onPickFile: ((Uri) -> Unit) -> Unit,
+    onReadCert: (String) -> Pair<List<CertInfo>, String?>
+) {
+    var pickedFileName by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<CertInfo>>(emptyList()) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            text = "查看证书信息",
+            style = MaterialTheme.typography.headlineSmall
+        )
+        Text(
+            text = "选择 .jks / .p12 证书文件,输入密码查看详情",
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        Button(
+            onClick = {
+                onPickFile { uri ->
+                    pickedFileName = uri.lastPathSegment ?: "已选择文件"
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("选择证书文件")
+        }
+
+        if (pickedFileName.isNotEmpty()) {
+            Text(
+                text = "已选择:$pickedFileName",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("密码") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Button(
+            onClick = {
+                val (info, error) = onReadCert(password)
+                results = info
+                errorMessage = error
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("查看")
+        }
+
+        errorMessage?.let { err ->
+            Text(
+                text = "读取失败: $err",
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        results.forEach { info ->
+            Divider()
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = "别名:${info.alias}", style = MaterialTheme.typography.titleMedium)
+                Text(text = "密钥算法:${info.algorithm}")
+                Text(text = "主体(Subject):${info.subject}")
+                Text(text = "生效日期:${info.notBefore}")
+                Text(text = "到期日期:${info.notAfter}")
+                Text(text = "序列号:${info.serialNumber}")
+                Text(text = "SHA-256 指纹:")
+                Text(text = info.sha256Fingerprint, style = MaterialTheme.typography.bodySmall)
+                Text(text = "SHA-1 指纹:")
+                Text(text = info.sha1Fingerprint, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
