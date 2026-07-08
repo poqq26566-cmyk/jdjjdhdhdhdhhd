@@ -40,10 +40,10 @@ android {
 
     packaging {
         resources {
-          excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
     }
-  }
 }
 
 dependencies {
@@ -57,4 +57,7 @@ dependencies {
     // BouncyCastle:用于生成密钥对与自签名X.509证书(与原C#版本使用的库一致)
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+
+    // apksig:Google官方APK签名库(与命令行apksigner同源),用于给APK签名
+    implementation("com.android.tools.build:apksig:8.7.2")
 }
