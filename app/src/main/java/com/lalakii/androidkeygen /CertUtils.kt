@@ -5,25 +5,40 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+import java.io.InputStream
 import java.io.OutputStream
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Security
 import java.security.cert.X509Certificate
+import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
+import java.util.Locale
 
-/** 支持的密钥算法,与原 Windows 版 AndroidKeyGen 保持一致 */
-enum class AlgorithmType { RSA, EC, DSA }
+/** 支持的密钥算法(已移除强度不足的 DSA) */
+enum class AlgorithmType { RSA, EC }
+
+/** 查看证书时展示的信息 */
+data class CertInfo(
+    val alias: String,
+    val algorithm: String,
+    val subject: String,
+    val notBefore: String,
+    val notAfter: String,
+    val serialNumber: String,
+    val sha256Fingerprint: String,
+    val sha1Fingerprint: String
+)
 
 object CertUtils {
 
     init {
-        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-            Security.addProvider(BouncyCastleProvider())
-        }
+        Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+        Security.insertProviderAt(BouncyCastleProvider(), 1)
     }
 
     /**
@@ -57,12 +72,6 @@ object CertUtils {
                     keyPairGenerator.initialize(256, random)
                     signatureAlgorithm = "SHA256withECDSA"
                 }
-
-                AlgorithmType.DSA -> {
-                    keyPairGenerator = KeyPairGenerator.getInstance("DSA", BouncyCastleProvider.PROVIDER_NAME)
-                    keyPairGenerator.initialize(1024, random)
-                    signatureAlgorithm = "SHA256withDSA"
-                }
             }
 
             val keyPair = keyPairGenerator.generateKeyPair()
@@ -73,7 +82,6 @@ object CertUtils {
             calendar.add(Calendar.YEAR, years)
             val notAfter = calendar.time
 
-            // 与原版一致:自签名证书,Issuer = Subject = "C=别名"
             val name = X500Name("C=$alias")
             val serial = BigInteger(63, random)
 
@@ -103,6 +111,47 @@ object CertUtils {
             null
         } catch (e: Exception) {
             e.message ?: e.toString()
+        }
+    }
+
+    /**
+     * 读取 .jks/.p12 证书文件并返回其中每个条目的详细信息
+     *
+     * @return Pair(证书信息列表, 错误信息)。成功时错误信息为 null。
+     */
+    fun readCertificateInfo(input: InputStream, password: String): Pair<List<CertInfo>, String?> {
+        return try {
+            val keyStore = KeyStore.getInstance("PKCS12", BouncyCastleProvider.PROVIDER_NAME)
+            keyStore.load(input, password.toCharArray())
+
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val results = mutableListOf<CertInfo>()
+
+            val aliases = keyStore.aliases()
+            while (aliases.hasMoreElements()) {
+                val alias = aliases.nextElement()
+                val cert = keyStore.getCertificate(alias) as? X509Certificate ?: continue
+
+                val sha256 = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
+                val sha1 = MessageDigest.getInstance("SHA-1").digest(cert.encoded)
+
+                results.add(
+                    CertInfo(
+                        alias = alias,
+                        algorithm = cert.publicKey.algorithm,
+                        subject = cert.subjectX500Principal.name,
+                        notBefore = dateFormat.format(cert.notBefore),
+                        notAfter = dateFormat.format(cert.notAfter),
+                        serialNumber = cert.serialNumber.toString(16),
+                        sha256Fingerprint = sha256.joinToString(":") { "%02X".format(it) },
+                        sha1Fingerprint = sha1.joinToString(":") { "%02X".format(it) }
+                    )
+                )
+            }
+
+            results to null
+        } catch (e: Exception) {
+            emptyList<CertInfo>() to (e.message ?: e.toString())
         }
     }
 }
