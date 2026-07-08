@@ -383,15 +383,25 @@ fun ViewCertScreen(
             Divider()
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = "别名:${info.alias}", style = MaterialTheme.typography.titleMedium)
-                Text(text = "密钥算法:${info.algorithm}")
+                Text(text = "版本:v${info.version}")
                 Text(text = "主体(Subject):${info.subject}")
-                Text(text = "生效日期:${info.notBefore}")
-                Text(text = "到期日期:${info.notAfter}")
+                Text(text = "签发者(Issuer):${info.issuer}")
+                Text(text = "是否自签名:${if (info.isSelfSigned) "是" else "否"}")
+                Text(text = "是否CA证书:${if (info.isCA) "是" else "否"}")
                 Text(text = "序列号:${info.serialNumber}")
+                Text(text = "生效时间:${info.notBefore}")
+                Text(text = "到期时间:${info.notAfter}")
+                Text(text = "签名算法:${info.signatureAlgorithm}")
+                Text(text = "公钥算法:${info.publicKeyAlgorithm}")
+                Text(
+                    text = "公钥位数:" + if (info.publicKeyBits > 0) "${info.publicKeyBits} 位" else "未知"
+                )
                 Text(text = "SHA-256 指纹:")
                 Text(text = info.sha256Fingerprint, style = MaterialTheme.typography.bodySmall)
                 Text(text = "SHA-1 指纹:")
                 Text(text = info.sha1Fingerprint, style = MaterialTheme.typography.bodySmall)
+                Text(text = "MD5 指纹:")
+                Text(text = info.md5Fingerprint, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
