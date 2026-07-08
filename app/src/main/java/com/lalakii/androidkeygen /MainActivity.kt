@@ -53,6 +53,15 @@ class MainActivity : ComponentActivity() {
     private var pendingViewUri: Uri? = null
     private var onCertPicked: ((Uri) -> Unit)? = null
 
+    // 签名APK时,用户选中的“未签名APK”和“证书文件”Uri
+    private var pendingSignApkUri: Uri? = null
+    private var pendingSignKeystoreUri: Uri? = null
+    private var onSignApkPicked: ((Uri) -> Unit)? = null
+    private var onSignKeystorePicked: ((Uri) -> Unit)? = null
+
+    // 签名完成后的APK文件,暂存于应用缓存目录,供用户选择保存位置
+    private var pendingSignedApkFile: java.io.File? = null
+
     private val createDocumentLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/x-pkcs12")) { uri ->
             val bytes = pendingBytes
@@ -69,6 +78,32 @@ class MainActivity : ComponentActivity() {
                 pendingViewUri = uri
                 onCertPicked?.invoke(uri)
             }
+        }
+
+    private val pickApkLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                pendingSignApkUri = uri
+                onSignApkPicked?.invoke(uri)
+            }
+        }
+
+    private val pickSignKeystoreLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                pendingSignKeystoreUri = uri
+                onSignKeystorePicked?.invoke(uri)
+            }
+        }
+
+    private val saveSignedApkLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")) { uri ->
+            val file = pendingSignedApkFile
+            if (uri != null && file != null) {
+                contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                Toast.makeText(this, "已签名APK保存成功", Toast.LENGTH_LONG).show()
+            }
+            pendingSignedApkFile = null
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,6 +125,11 @@ class MainActivity : ComponentActivity() {
                                 onClick = { selectedTab = 1 },
                                 text = { Text("查看证书") }
                             )
+                            Tab(
+                                selected = selectedTab == 2,
+                                onClick = { selectedTab = 2 },
+                                text = { Text("签名APK") }
+                            )
                         }
 
                         if (selectedTab == 0) {
@@ -105,7 +145,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             )
-                        } else {
+                        } else if (selectedTab == 1) {
                             ViewCertScreen(
                                 onPickFile = { onPicked ->
                                     onCertPicked = onPicked
@@ -119,6 +159,54 @@ class MainActivity : ComponentActivity() {
                                         contentResolver.openInputStream(uri)?.use { input ->
                                             CertUtils.readCertificateInfo(input, password)
                                         } ?: Pair(emptyList(), "无法读取所选文件")
+                                    }
+                                }
+                            )
+                        } else {
+                            SignApkScreen(
+                                onPickApk = { onPicked ->
+                                    onSignApkPicked = onPicked
+                                    pickApkLauncher.launch(arrayOf("application/vnd.android.package-archive"))
+                                },
+                                onPickKeystore = { onPicked ->
+                                    onSignKeystorePicked = onPicked
+                                    pickSignKeystoreLauncher.launch(arrayOf("*/*"))
+                                },
+                                onSign = { keystorePassword, alias, keyPassword ->
+                                    val apkUri = pendingSignApkUri
+                                    val ksUri = pendingSignKeystoreUri
+                                    if (apkUri == null) {
+                                        "请先选择未签名的APK文件"
+                                    } else if (ksUri == null) {
+                                        "请先选择证书文件"
+                                    } else {
+                                        try {
+                                            val inputApkFile = java.io.File(cacheDir, "input_unsigned.apk")
+                                            contentResolver.openInputStream(apkUri)?.use { input ->
+                                                inputApkFile.outputStream().use { input.copyTo(it) }
+                                            }
+                                            val outputApkFile = java.io.File(cacheDir, "output_signed.apk")
+                                            if (outputApkFile.exists()) outputApkFile.delete()
+
+                                            val error = contentResolver.openInputStream(ksUri)?.use { ksInput ->
+                                                ApkSignUtils.signApk(
+                                                    inputApkFile,
+                                                    outputApkFile,
+                                                    ksInput,
+                                                    keystorePassword,
+                                                    alias.ifBlank { null },
+                                                    keyPassword.ifBlank { null }
+                                                )
+                                            } ?: "无法读取证书文件"
+
+                                            if (error == null) {
+                                                pendingSignedApkFile = outputApkFile
+                                                saveSignedApkLauncher.launch("signed.apk")
+                                            }
+                                            error
+                                        } catch (e: Exception) {
+                                            e.message ?: e.toString()
+                                        }
                                     }
                                 }
                             )
@@ -406,3 +494,7 @@ fun ViewCertScreen(
         }
     }
 }
+
+@Composable
+fun SignApkScreen(
+    onPickApk: ((Uri) -> Unit)
