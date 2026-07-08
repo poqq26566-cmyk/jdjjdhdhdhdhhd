@@ -25,13 +25,20 @@ enum class AlgorithmType { RSA, EC }
 /** 查看证书时展示的信息 */
 data class CertInfo(
     val alias: String,
-    val algorithm: String,
+    val version: Int,
     val subject: String,
+    val issuer: String,
+    val serialNumber: String,
     val notBefore: String,
     val notAfter: String,
-    val serialNumber: String,
+    val signatureAlgorithm: String,
+    val publicKeyAlgorithm: String,
+    val publicKeyBits: Int,
+    val isSelfSigned: Boolean,
+    val isCA: Boolean,
     val sha256Fingerprint: String,
-    val sha1Fingerprint: String
+    val sha1Fingerprint: String,
+    val md5Fingerprint: String
 )
 
 object CertUtils {
@@ -82,7 +89,10 @@ object CertUtils {
             calendar.add(Calendar.YEAR, years)
             val notAfter = calendar.time
 
-            val name = X500Name("C=$alias")
+            // 注意:X.509 的 "C=" (Country) 字段规定必须是2位国家代码,采用受限的
+            // PrintableString 编码,任意长度的别名(尤其含中文)写入会导致乱码。
+            // 改用 "CN=" (Common Name) 字段,支持 UTF8String 编码,可正确保存任意文字。
+            val name = X500Name("CN=$alias")
             val serial = BigInteger(63, random)
 
             val certBuilder = JcaX509v3CertificateBuilder(
@@ -124,7 +134,7 @@ object CertUtils {
             val keyStore = KeyStore.getInstance("PKCS12", BouncyCastleProvider.PROVIDER_NAME)
             keyStore.load(input, password.toCharArray())
 
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
             val results = mutableListOf<CertInfo>()
 
             val aliases = keyStore.aliases()
@@ -134,17 +144,39 @@ object CertUtils {
 
                 val sha256 = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
                 val sha1 = MessageDigest.getInstance("SHA-1").digest(cert.encoded)
+                val md5 = MessageDigest.getInstance("MD5").digest(cert.encoded)
+
+                // 公钥位数:RSA 取模数位长,EC 取曲线域位长,其他类型尽力而为
+                val publicKeyBits: Int = when (val pub = cert.publicKey) {
+                    is java.security.interfaces.RSAPublicKey -> pub.modulus.bitLength()
+                    is java.security.interfaces.ECPublicKey -> pub.params.curve.field.fieldSize
+                    else -> -1
+                }
+
+                val isSelfSigned = try {
+                    cert.verify(cert.publicKey)
+                    true
+                } catch (e: Exception) {
+                    false
+                }
 
                 results.add(
                     CertInfo(
                         alias = alias,
-                        algorithm = cert.publicKey.algorithm,
+                        version = cert.version,
                         subject = cert.subjectX500Principal.name,
+                        issuer = cert.issuerX500Principal.name,
+                        serialNumber = cert.serialNumber.toString(16),
                         notBefore = dateFormat.format(cert.notBefore),
                         notAfter = dateFormat.format(cert.notAfter),
-                        serialNumber = cert.serialNumber.toString(16),
+                        signatureAlgorithm = cert.sigAlgName,
+                        publicKeyAlgorithm = cert.publicKey.algorithm,
+                        publicKeyBits = publicKeyBits,
+                        isSelfSigned = isSelfSigned,
+                        isCA = cert.basicConstraints != -1,
                         sha256Fingerprint = sha256.joinToString(":") { "%02X".format(it) },
-                        sha1Fingerprint = sha1.joinToString(":") { "%02X".format(it) }
+                        sha1Fingerprint = sha1.joinToString(":") { "%02X".format(it) },
+                        md5Fingerprint = md5.joinToString(":") { "%02X".format(it) }
                     )
                 )
             }
