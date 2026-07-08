@@ -98,7 +98,7 @@ class MainActivity : ComponentActivity() {
                                     val out = java.io.ByteArrayOutputStream()
                                     val error = CertUtils.create(out, type, years, alias, password, date)
                                     if (error != null) {
-                                        Toast.makeText(this, "证书创建失败: $error", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(this@MainActivity, "证书创建失败: $error", Toast.LENGTH_LONG).show()
                                     } else {
                                         pendingBytes = out.toByteArray()
                                         createDocumentLauncher.launch("$alias.jks")
