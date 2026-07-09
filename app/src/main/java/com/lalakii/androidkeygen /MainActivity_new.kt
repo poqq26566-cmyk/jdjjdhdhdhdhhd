@@ -497,7 +497,7 @@ fun ViewCertScreen(
 
 @Composable
 fun SignApkScreen(
-    onPickApk: ((Uri) -> Unit) -> Unit,
+        onPickApk: ((Uri) -> Unit) -> Unit,
     onPickKeystore: ((Uri) -> Unit) -> Unit,
     onSign: (keystorePassword: String, alias: String, keyPassword: String) -> String?
 ) {
